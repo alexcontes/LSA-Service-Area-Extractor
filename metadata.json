@@ -1,0 +1,7 @@
+{
+  "name": "Copy of LSA Service Area Extractor",
+  "description": "A precision tool for Google Local Services Ads (LSA) to extract ZIP codes, cities, and counties from drawn map areas, with high-income demographic filtering.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

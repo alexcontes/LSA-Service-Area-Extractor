@@ -1,0 +1,1 @@
+// Deprecated. Use Header.tsx at root.

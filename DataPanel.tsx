@@ -42,7 +42,18 @@ const DataPanel: React.FC<DataPanelProps> = ({
   const [isPushing, setIsPushing] = React.useState(false);
   const [showSuccess, setShowSuccess] = React.useState(false);
   const [successMsg, setSuccessMsg] = React.useState('');
-  const [targetClientId, setTargetClientId] = React.useState(process.env.GOOGLE_CLIENT_ID || '');
+  
+  const getClientId = () => {
+    const params = new URLSearchParams(window.location.search);
+    return (
+      params.get('selected_client_id') ||
+      process.env.GOOGLE_CLIENT_ID ||
+      ''
+    );
+  };
+
+  const [targetClientId, setTargetClientId] = React.useState(getClientId());
+
 
   const pushToGoogleAds = async () => {
     const selected = areas.filter(a => a.isSelected);

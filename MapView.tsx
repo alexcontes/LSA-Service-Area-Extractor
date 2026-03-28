@@ -11,6 +11,7 @@ const MapView: React.FC<MapViewProps> = ({ onPolygonDrawn, centerRequest }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const circleRef = useRef<L.Circle | null>(null);
+  const historyRef = useRef<L.Layer[]>([]);
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
@@ -55,15 +56,50 @@ const MapView: React.FC<MapViewProps> = ({ onPolygonDrawn, centerRequest }) => {
     // @ts-ignore
     map.on('pm:create', (e: any) => {
       const { layer } = e;
-      if (layer instanceof L.Polygon || layer instanceof L.Rectangle) {
-        const latlngs = layer.getLatLngs();
-        const firstRing = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
-        const coords = (firstRing as L.LatLng[]).map(ll => [ll.lat, ll.lng]);
-        onPolygonDrawn(coords);
+      historyRef.current.push(layer);
+
+      if (layer instanceof L.Polygon || layer instanceof L.Rectangle || layer instanceof L.Circle || layer instanceof L.Polyline) {
+        let coords: number[][] = [];
+        
+        if (layer instanceof L.Polygon || layer instanceof L.Rectangle) {
+          const latlngs = layer.getLatLngs();
+          const firstRing = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
+          coords = (firstRing as L.LatLng[]).map(ll => [ll.lat, ll.lng]);
+        } else if (layer instanceof L.Polyline) {
+          const latlngs = layer.getLatLngs() as L.LatLng[];
+          coords = latlngs.map(ll => [ll.lat, ll.lng]);
+        } else if (layer instanceof L.Circle) {
+          const center = layer.getLatLng();
+          coords = [[center.lat, center.lng]];
+        }
+
+        if (coords.length > 0) {
+          onPolygonDrawn(coords);
+        }
       }
     });
 
+    // Keyboard shortcuts for Undo
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isUndo = (e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey;
+      
+      if (isUndo) {
+        e.preventDefault();
+        const lastLayer = historyRef.current.pop();
+        if (lastLayer) {
+          lastLayer.remove();
+          // If it was the current search circle, clear the ref
+          if (lastLayer === circleRef.current) {
+            circleRef.current = null;
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
     return () => {
+      window.removeEventListener('keydown', handleKeyDown);
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -81,6 +117,8 @@ const MapView: React.FC<MapViewProps> = ({ onPolygonDrawn, centerRequest }) => {
     // Remove previous radial search circle
     if (circleRef.current) {
       circleRef.current.remove();
+      // Also remove from history if it's there
+      historyRef.current = historyRef.current.filter(l => l !== circleRef.current);
     }
 
     // Convert miles to meters for Leaflet's circle
@@ -97,6 +135,7 @@ const MapView: React.FC<MapViewProps> = ({ onPolygonDrawn, centerRequest }) => {
     }).addTo(map);
 
     circleRef.current = circle;
+    historyRef.current.push(circle);
 
     // Zoom and pan
     map.setView([lat, lng], 12);

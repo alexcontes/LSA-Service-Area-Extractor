@@ -11,7 +11,7 @@ const MapView: React.FC<MapViewProps> = ({ onPolygonDrawn, centerRequest }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const circleRef = useRef<L.Circle | null>(null);
-  const historyRef = useRef<L.Layer[]>([]);
+  const drawnLayersRef = useRef<L.Layer[]>([]);
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
@@ -35,8 +35,11 @@ const MapView: React.FC<MapViewProps> = ({ onPolygonDrawn, centerRequest }) => {
     map.pm.addControls({
       position: 'topleft',
       drawMarker: false,
+      drawCircleMarker: false,
+      drawPolyline: false,
       drawRectangle: true,
       drawPolygon: true,
+      drawCircle: true,
       editMode: true,
       removalMode: true,
       dragMode: true
@@ -56,42 +59,41 @@ const MapView: React.FC<MapViewProps> = ({ onPolygonDrawn, centerRequest }) => {
     // @ts-ignore
     map.on('pm:create', (e: any) => {
       const { layer } = e;
-      historyRef.current.push(layer);
+      drawnLayersRef.current.push(layer);
 
-      if (layer instanceof L.Polygon || layer instanceof L.Rectangle || layer instanceof L.Circle || layer instanceof L.Polyline) {
-        let coords: number[][] = [];
+      if (layer instanceof L.Polygon || layer instanceof L.Rectangle) {
+        const latlngs = layer.getLatLngs();
+        const firstRing = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
+        const coords = (firstRing as L.LatLng[]).map(ll => [ll.lat, ll.lng]);
+        onPolygonDrawn(coords);
+      } else if (layer instanceof L.Circle) {
+        const center = layer.getLatLng();
+        const radiusMeters = layer.getRadius();
         
-        if (layer instanceof L.Polygon || layer instanceof L.Rectangle) {
-          const latlngs = layer.getLatLngs();
-          const firstRing = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
-          coords = (firstRing as L.LatLng[]).map(ll => [ll.lat, ll.lng]);
-        } else if (layer instanceof L.Polyline) {
-          const latlngs = layer.getLatLngs() as L.LatLng[];
-          coords = latlngs.map(ll => [ll.lat, ll.lng]);
-        } else if (layer instanceof L.Circle) {
-          const center = layer.getLatLng();
-          coords = [[center.lat, center.lng]];
+        // Convert circle to polygon for AI extraction
+        const points = 32;
+        const radiusInDeg = (radiusMeters / 1000) / 111.32;
+        const polygonCoords: number[][] = [];
+        
+        for (let i = 0; i < points; i++) {
+          const angle = (i / points) * (2 * Math.PI);
+          const latOffset = radiusInDeg * Math.cos(angle);
+          const lngOffset = (radiusInDeg * Math.sin(angle)) / Math.cos(center.lat * Math.PI / 180);
+          polygonCoords.push([center.lat + latOffset, center.lng + lngOffset]);
         }
-
-        if (coords.length > 0) {
-          onPolygonDrawn(coords);
-        }
+        polygonCoords.push(polygonCoords[0]); // Close
+        onPolygonDrawn(polygonCoords);
       }
     });
 
-    // Keyboard shortcuts for Undo
+    // Keyboard Undo Support
     const handleKeyDown = (e: KeyboardEvent) => {
-      const isUndo = (e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey;
-      
-      if (isUndo) {
-        e.preventDefault();
-        const lastLayer = historyRef.current.pop();
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        // If currently drawing, Geoman handles vertex removal usually, 
+        // but if we want to remove the last finished layer:
+        const lastLayer = drawnLayersRef.current.pop();
         if (lastLayer) {
           lastLayer.remove();
-          // If it was the current search circle, clear the ref
-          if (lastLayer === circleRef.current) {
-            circleRef.current = null;
-          }
         }
       }
     };
@@ -117,8 +119,6 @@ const MapView: React.FC<MapViewProps> = ({ onPolygonDrawn, centerRequest }) => {
     // Remove previous radial search circle
     if (circleRef.current) {
       circleRef.current.remove();
-      // Also remove from history if it's there
-      historyRef.current = historyRef.current.filter(l => l !== circleRef.current);
     }
 
     // Convert miles to meters for Leaflet's circle
@@ -135,7 +135,6 @@ const MapView: React.FC<MapViewProps> = ({ onPolygonDrawn, centerRequest }) => {
     }).addTo(map);
 
     circleRef.current = circle;
-    historyRef.current.push(circle);
 
     // Zoom and pan
     map.setView([lat, lng], 12);

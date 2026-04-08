@@ -41,7 +41,7 @@ export const fetchAreasInPolygon = async (polygonCoords: number[][]): Promise<Se
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.1-pro-preview',
+      model: 'gemini-3-flash-preview',
       contents: prompt,
       config: {
         systemInstruction: "You are a specialized geospatial data extractor. Your primary goal is 100% exhaustiveness. You must return EVERY single ZIP code, city, and county that intersects the provided boundary, regardless of how many results there are. Never truncate, summarize, or omit data to save space.",

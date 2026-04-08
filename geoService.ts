@@ -13,7 +13,7 @@ export const fetchAreasInPolygon = async (polygonCoords: number[][]): Promise<Se
       throw new Error("API Key is missing. Please select a project first.");
     }
 
-    console.log("Starting Exhaustive AI Extraction with model: gemini-3.1-pro-preview");
+    console.log("NEW MODEL - Starting Exhaustive AI Extraction with model: gemini-3.1-pro-preview");
     const ai = new GoogleGenAI({ apiKey });
     const coordsString = polygonCoords.map(c => `[${c[0].toFixed(6)}, ${c[1].toFixed(6)}]`).join(', ');
     

@@ -35,8 +35,8 @@ const App: React.FC = () => {
     try {
       const results = await fetchAreasInPolygon(coords);
       setAreas(prev => {
-        const existingNames = new Set(prev.map(p => `${p.type}-${p.name}`));
-        const uniqueNew = results.filter(r => !existingNames.has(`${r.type}-${r.name}`));
+        const existingNames = new Set(prev.map(p => `${p.type}-${p.name}-${p.stateCode || ''}`));
+        const uniqueNew = results.filter(r => !existingNames.has(`${r.type}-${r.name}-${r.stateCode || ''}`));
         return [...prev, ...uniqueNew];
       });
     } catch (error: any) {

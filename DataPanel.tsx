@@ -1,5 +1,7 @@
 import React from 'react';
 import { ServiceArea } from './types';
+import { db, getTrackingContext } from './lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 interface DataPanelProps {
   areas: ServiceArea[];
@@ -42,18 +44,7 @@ const DataPanel: React.FC<DataPanelProps> = ({
   const [isPushing, setIsPushing] = React.useState(false);
   const [showSuccess, setShowSuccess] = React.useState(false);
   const [successMsg, setSuccessMsg] = React.useState('');
-  
-  const getClientId = () => {
-    const params = new URLSearchParams(window.location.search);
-    return (
-      params.get('selected_client_id') ||
-      process.env.GOOGLE_CLIENT_ID ||
-      ''
-    );
-  };
-
-  const [targetClientId, setTargetClientId] = React.useState(getClientId());
-
+  const [targetClientId, setTargetClientId] = React.useState(process.env.GOOGLE_CLIENT_ID || '');
 
   const pushToGoogleAds = async () => {
     const selected = areas.filter(a => a.isSelected);
@@ -80,6 +71,22 @@ const DataPanel: React.FC<DataPanelProps> = ({
       if (data.success) {
         setSuccessMsg(data.message);
         setShowSuccess(true);
+        
+        // Log to Push History
+        try {
+          const { username, accountId } = getTrackingContext();
+          await addDoc(collection(db, 'history_pushes'), {
+            userId: username,
+            accountId: accountId,
+            timestamp: serverTimestamp(),
+            campaignId: targetClientId,
+            serviceAreaCount: selected.length,
+            areas: selected.map(a => ({ name: a.name, stateCode: a.stateCode, type: a.type }))
+          });
+        } catch (err) {
+          console.error("Failed to log push history:", err);
+        }
+
         setTimeout(() => setShowSuccess(false), 8000);
       } else {
         alert(`Error: ${data.error || 'Failed to push to Google Ads'}`);

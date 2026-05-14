@@ -2,8 +2,11 @@ import React, { useState, useCallback, useEffect } from 'react';
 import MapView from './MapView';
 import DataPanel from './DataPanel';
 import Header from './Header';
+import HistoryModal from './components/HistoryModal';
 import { ServiceArea } from './types';
 import { fetchAreasInPolygon, geocodeWithAI } from './geoService';
+import { db, getTrackingContext } from './lib/firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 const App: React.FC = () => {
   const [areas, setAreas] = useState<ServiceArea[]>([]);
@@ -12,6 +15,7 @@ const App: React.FC = () => {
   const [showOnlyHighIncome, setShowOnlyHighIncome] = useState(false);
   const [hasKey, setHasKey] = useState(true);
   const [mapCenterRequest, setMapCenterRequest] = useState<{lat: number, lng: number, radius: number} | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   useEffect(() => {
     const checkKey = async () => {
@@ -32,8 +36,25 @@ const App: React.FC = () => {
 
   const handlePolygonDrawn = useCallback(async (coords: number[][]) => {
     setIsProcessing(true);
+    const { username, accountId } = getTrackingContext();
+
     try {
       const results = await fetchAreasInPolygon(coords);
+      
+      // Log to Search History
+      try {
+        await addDoc(collection(db, 'history_searches'), {
+          userId: username,
+          accountId: accountId,
+          timestamp: serverTimestamp(),
+          coordinates: coords.map(c => ({ lat: c[0], lng: c[1] })),
+          resultCount: results.length,
+          areas: results.map(r => ({ name: r.name, stateCode: r.stateCode, type: r.type }))
+        });
+      } catch (err) {
+        console.error("Failed to log search:", err);
+      }
+
       setAreas(prev => {
         const existingNames = new Set(prev.map(p => `${p.type}-${p.name}-${p.stateCode || ''}`));
         const uniqueNew = results.filter(r => !existingNames.has(`${r.type}-${r.name}-${r.stateCode || ''}`));
@@ -120,7 +141,15 @@ const App: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen w-screen bg-white overflow-hidden font-sans">
-      <Header onRadiusExtract={handleRadiusExtract} />
+      <Header 
+        onRadiusExtract={handleRadiusExtract} 
+        onHistoryClick={() => setIsHistoryOpen(true)}
+      />
+      
+      <HistoryModal 
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+      />
       
       {!hasKey && (
         <div className="bg-amber-50 border-b border-amber-100 px-6 py-2 flex items-center justify-between z-20 shrink-0">

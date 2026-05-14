@@ -1,0 +1,52 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Primitives
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return true; } // Temporarily true until we add Auth in UI
+
+    // Schema Validation Helpers
+    function isValidSearch(data) {
+      return data.keys().hasAll(['userId', 'accountId', 'timestamp', 'areas', 'resultCount']) &&
+             data.userId is string && data.userId.size() <= 100 &&
+             data.accountId is string && data.accountId.size() <= 50 &&
+             data.timestamp == request.time &&
+             data.resultCount is number &&
+             data.areas is list && data.areas.size() <= 1000;
+    }
+
+    function isValidPush(data) {
+      return data.keys().hasAll(['userId', 'accountId', 'timestamp', 'areas', 'campaignId', 'serviceAreaCount']) &&
+             data.userId is string && data.userId.size() <= 100 &&
+             data.accountId is string && data.accountId.size() <= 50 &&
+             data.timestamp == request.time &&
+             data.campaignId is string &&
+             data.serviceAreaCount is number &&
+             data.areas is list && data.areas.size() <= 1000;
+    }
+
+    // Collection: History Searches
+    match /history_searches/{searchId} {
+      allow create: if isValidId(searchId) && isValidSearch(incoming());
+      allow list: if resource.data.accountId != null; // Enforced by client query filter
+      allow get: if true;
+    }
+
+    // Collection: History Pushes
+    match /history_pushes/{pushId} {
+      allow create: if isValidId(pushId) && isValidPush(incoming());
+      allow list: if resource.data.accountId != null;
+      allow get: if true;
+    }
+  }
+}

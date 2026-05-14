@@ -1,0 +1,43 @@
+{
+  "entities": {
+    "Search": {
+      "title": "Geospatial Search",
+      "description": "Records a search operation performed on the map",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The username of the searcher" },
+        "accountId": { "type": "string", "description": "The account ID for isolation" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "coordinates": { "type": "array" },
+        "resultsSummary": { "type": "string" },
+        "resultCount": { "type": "number" },
+        "areas": { "type": "array" }
+      },
+      "required": ["userId", "accountId", "timestamp", "areas"]
+    },
+    "Push": {
+      "title": "LSA Push",
+      "description": "Records an LSA push operation",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "accountId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "campaignId": { "type": "string" },
+        "serviceAreaCount": { "type": "number" },
+        "areas": { "type": "array" }
+      },
+      "required": ["userId", "accountId", "timestamp", "areas"]
+    }
+  },
+  "firestore": {
+    "/history/searches/{searchId}": {
+      "schema": "Search",
+      "description": "History of all searches performed"
+    },
+    "/history/pushes/{pushId}": {
+      "schema": "Push",
+      "description": "History of all LSA pushes performed"
+    }
+  }
+}

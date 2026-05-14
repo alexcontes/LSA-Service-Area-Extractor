@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 
 interface HeaderProps {
   onRadiusExtract?: (address: string, radius: number) => void;
+  onHistoryClick?: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ onRadiusExtract }) => {
+const Header: React.FC<HeaderProps> = ({ onRadiusExtract, onHistoryClick }) => {
   const [address, setAddress] = useState('');
   const [radius, setRadius] = useState(10);
 
@@ -73,6 +74,17 @@ const Header: React.FC<HeaderProps> = ({ onRadiusExtract }) => {
       </form>
       
       <div className="hidden xl:flex items-center gap-4">
+        <button 
+          onClick={onHistoryClick}
+          className="flex items-center gap-2 bg-white border border-gray-100 hover:border-gray-200 p-2 pr-4 rounded-xl shadow-sm transition-all group"
+        >
+          <div className="h-8 w-8 rounded-lg bg-gray-50 flex items-center justify-center text-gray-400 group-hover:text-blue-600 group-hover:bg-blue-50 transition-colors">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">History</span>
+        </button>
         <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-black border-2 border-white shadow-sm text-xs">
           LSA
         </div>

@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import axios from "axios";
 import { OAuth2Client } from "google-auth-library";
 import cors from "cors";
@@ -166,8 +165,9 @@ app.post("/api/push-to-google-ads", async (req, res) => {
 });
 
 // Vite middleware for development
-if (process.env.NODE_ENV !== "production") {
+if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
   async function setupVite() {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

@@ -2,8 +2,23 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { ServiceArea } from './types';
 
 /**
+ * Calculate distance in miles using Haversine formula
+ */
+export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 3958.8; // Earth's radius in miles
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
  * AI Service for geospatial extraction.
- * Optimized for high-speed ZIP/City/County identification.
+ * Optimized for high-speed ZIP/City/County identification with mathematical bounding-box constraints.
  */
 export const fetchAreasInPolygon = async (polygonCoords: number[][]): Promise<ServiceArea[]> => {
   try {
@@ -13,7 +28,23 @@ export const fetchAreasInPolygon = async (polygonCoords: number[][]): Promise<Se
       throw new Error("API Key is missing. Please select a project first.");
     }
 
-    console.log("Starting AI Extraction with model: gemini-3-flash-preview");
+    // 1. Calculate the polygon's centroid and maximum radius (boundary) to filter hallucinations
+    let centerLat = 0;
+    let centerLng = 0;
+    polygonCoords.forEach(c => {
+      centerLat += c[0];
+      centerLng += c[1];
+    });
+    const avgLat = centerLat / polygonCoords.length;
+    const avgLng = centerLng / polygonCoords.length;
+
+    let maxRadiusMiles = 0;
+    polygonCoords.forEach(c => {
+      const dist = calculateDistance(avgLat, avgLng, c[0], c[1]);
+      if (dist > maxRadiusMiles) maxRadiusMiles = dist;
+    });
+
+    console.log(`Starting Exhaustive AI Extraction with model gemini-3.1-pro-preview. Centroid: [${avgLat.toFixed(6)}, ${avgLng.toFixed(6)}], Bounding Radius: ${maxRadiusMiles.toFixed(2)} miles`);
     const ai = new GoogleGenAI({ apiKey });
     const coordsString = polygonCoords.map(c => `[${c[0].toFixed(6)}, ${c[1].toFixed(6)}]`).join(', ');
     
@@ -21,32 +52,32 @@ export const fetchAreasInPolygon = async (polygonCoords: number[][]): Promise<Se
       You are a precision geospatial data engineer specializing in US Census and postal data.
       
       BOUNDARY (Polygon Coordinates): ${coordsString}
+      ESTIMATED SEARCH RADIUS: ${maxRadiusMiles.toFixed(2)} miles around the center point Point[${avgLat.toFixed(6)}, ${avgLng.toFixed(6)}]
 
       TASK:
-      Identify EVERY administrative area (Zip, City, County) that intersects this boundary.
+      Identify EVERY single administrative area (ZIP code, city/town, county) that falls within or touches this boundary.
       
-      CRITICAL REQUIREMENTS:
-      1. SPATIAL PRECISION: Only include areas that have a meaningful intersection with the polygon. 
-         - IGNORE areas that only have a negligible sliver (e.g., < 5% of their area or unpopulated land) touching the boundary. 
-         - This is critical to prevent "Boundary Creep" where a tiny touch triggers a massive rural service area.
-      2. ZIP CODES: Identify every 5-digit ZIP code. For each, provide the estimated Median Household Income.
-      3. CITIES/TOWNS/CDPs: Include incorporated cities and Census Designated Places. Ensure you have the correct state.
-      4. COUNTIES: Identify all counties with significant portions inside the boundary.
-      5. DUPLICATION: Return each unique area only once.
+      CRITICAL REQUIREMENTS & CONSTRAINTS:
+      1. UNIVERSAL EXHAUSTIVENESS: Identify 100% of the areas that meet the criteria. Never truncate or omit any results.
+      2. STRICT SPATIAL PRECISION: Do NOT include any area whose center centroid is further than ${maxRadiusMiles.toFixed(2)} miles from our center point [${avgLat.toFixed(2)}, ${avgLng.toFixed(2)}]. You must be highly selective to prevent wider regional leakage.
+      3. COORDINATE LABELS: For each ZIP code, city/town, and county, you MUST provide its center/centroid coordinates (latitude and longitude) for verification.
+      4. ZIP CODES: Identify every 5-digit ZIP code. For each, estimate the Median Household Income.
+      5. CITIES: Include all incorporated cities, towns, and Census Designated Places (CDPs).
+      6. COUNTIES: Identify all counties intersecting the boundary.
 
       Return the data in the following JSON format:
       {
-        "zipCodes": [{"name": "32801", "stateCode": "FL", "state": "Florida", "income": 75000}, ...],
-        "cities": [{"name": "Orlando", "stateCode": "FL", "state": "Florida"}, ...],
-        "counties": [{"name": "Orange", "stateCode": "FL", "state": "Florida"}]
+        "zipCodes": [{"name": "32801", "income": 75000, "lat": 28.5383, "lng": -81.3792}, ...],
+        "cities": [{"name": "Orlando", "lat": 28.5383, "lng": -81.3792}, ...],
+        "counties": [{"name": "Orange", "lat": 28.5383, "lng": -81.3792}, ...]
       }
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3.1-pro-preview',
       contents: prompt,
       config: {
-        systemInstruction: "You are a specialized geospatial data extractor focused on high accuracy and spatial relevance. Your goal is to return EVERY ZIP code, city, and county that intersects the provided boundary. CRITICAL: To prevent over-targeting, if an area only intersects by a tiny sliver that is likely unpopulated or represents less than 5% of its total area, OMIT IT. Always include full state name and code for every item.",
+        systemInstruction: `You are a specialized geospatial data extractor. Your primary goal is 100% exhaustiveness within the strictly defined spatial bounds. You must return EVERY single ZIP code, city, and county that intersects the provided boundary, along with its estimated centroid coordinates (lat/lng). NEVER include areas far outside the requested ${(maxRadiusMiles).toFixed(1)} miles radius.`,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -57,11 +88,11 @@ export const fetchAreasInPolygon = async (polygonCoords: number[][]): Promise<Se
                 type: Type.OBJECT,
                 properties: {
                   name: { type: Type.STRING },
-                  state: { type: Type.STRING },
-                  stateCode: { type: Type.STRING },
-                  income: { type: Type.NUMBER }
+                  income: { type: Type.NUMBER },
+                  lat: { type: Type.NUMBER },
+                  lng: { type: Type.NUMBER }
                 },
-                required: ['name', 'state', 'stateCode', 'income']
+                required: ['name', 'income', 'lat', 'lng']
               }
             },
             cities: {
@@ -70,10 +101,10 @@ export const fetchAreasInPolygon = async (polygonCoords: number[][]): Promise<Se
                 type: Type.OBJECT,
                 properties: {
                   name: { type: Type.STRING },
-                  state: { type: Type.STRING },
-                  stateCode: { type: Type.STRING }
+                  lat: { type: Type.NUMBER },
+                  lng: { type: Type.NUMBER }
                 },
-                required: ['name', 'state', 'stateCode']
+                required: ['name', 'lat', 'lng']
               }
             },
             counties: {
@@ -82,10 +113,10 @@ export const fetchAreasInPolygon = async (polygonCoords: number[][]): Promise<Se
                 type: Type.OBJECT,
                 properties: {
                   name: { type: Type.STRING },
-                  state: { type: Type.STRING },
-                  stateCode: { type: Type.STRING }
+                  lat: { type: Type.NUMBER },
+                  lng: { type: Type.NUMBER }
                 },
-                required: ['name', 'state', 'stateCode']
+                required: ['name', 'lat', 'lng']
               }
             }
           },
@@ -98,59 +129,86 @@ export const fetchAreasInPolygon = async (polygonCoords: number[][]): Promise<Se
     if (!text) return [];
 
     const data = JSON.parse(text);
-    console.log("Extracted Data Summary:", {
+    console.log("Extracted Data Raw Count:", {
       zips: data.zipCodes?.length,
       cities: data.cities?.length,
       counties: data.counties?.length
     });
     
     const results: ServiceArea[] = [];
+    
+    // We allow a gentle 15% buffer above the bounding radius to ensure we don't accidentally discard large ZIP codes or cities that partially cross our boundary
+    const maxBoundaryWithBuffer = maxRadiusMiles * 1.15;
 
-    // Process Zip Codes
+    // Process Zip Codes with strict physical radius filter
     if (data.zipCodes) {
       data.zipCodes.forEach((item: any) => {
+        const itemLat = Number(item.lat);
+        const itemLng = Number(item.lng);
+        if (!isNaN(itemLat) && !isNaN(itemLng)) {
+          const dist = calculateDistance(avgLat, avgLng, itemLat, itemLng);
+          if (dist > maxBoundaryWithBuffer) {
+            console.log(`[FILTERED OUT] ZIP ${item.name} is ${dist.toFixed(2)} miles away (radius limit with buffer: ${maxBoundaryWithBuffer.toFixed(2)} miles)`);
+            return;
+          }
+        }
         results.push({
           id: `Zip-${item.name}-${Math.random().toString(36).substr(2, 5)}`,
           type: 'Zip Code',
           name: item.name,
-          state: item.state,
-          stateCode: item.stateCode,
           income: item.income,
           isSelected: true
         });
       });
     }
 
-    // Process Cities
+    // Process Cities with strict physical radius filter
     if (data.cities) {
       data.cities.forEach((item: any) => {
+        const name = typeof item === 'object' ? item.name : item;
+        const itemLat = typeof item === 'object' ? Number(item.lat) : NaN;
+        const itemLng = typeof item === 'object' ? Number(item.lng) : NaN;
+        if (!isNaN(itemLat) && !isNaN(itemLng)) {
+          const dist = calculateDistance(avgLat, avgLng, itemLat, itemLng);
+          if (dist > maxBoundaryWithBuffer) {
+            console.log(`[FILTERED OUT] City ${name} is ${dist.toFixed(2)} miles away (radius limit with buffer: ${maxBoundaryWithBuffer.toFixed(2)} miles)`);
+            return;
+          }
+        }
         results.push({
-          id: `City-${item.name}-${Math.random().toString(36).substr(2, 5)}`,
+          id: `City-${name}-${Math.random().toString(36).substr(2, 5)}`,
           type: 'City',
-          name: item.name,
-          state: item.state,
-          stateCode: item.stateCode,
+          name: name,
           income: undefined,
           isSelected: true
         });
       });
     }
 
-    // Process Counties
+    // Process Counties with strict physical radius filter
     if (data.counties) {
       data.counties.forEach((item: any) => {
+        const name = typeof item === 'object' ? item.name : item;
+        const itemLat = typeof item === 'object' ? Number(item.lat) : NaN;
+        const itemLng = typeof item === 'object' ? Number(item.lng) : NaN;
+        if (!isNaN(itemLat) && !isNaN(itemLng)) {
+          const dist = calculateDistance(avgLat, avgLng, itemLat, itemLng);
+          if (dist > maxBoundaryWithBuffer) {
+            console.log(`[FILTERED OUT] County ${name} is ${dist.toFixed(2)} miles away (radius limit with buffer: ${maxBoundaryWithBuffer.toFixed(2)} miles)`);
+            return;
+          }
+        }
         results.push({
-          id: `County-${item.name}-${Math.random().toString(36).substr(2, 5)}`,
+          id: `County-${name}-${Math.random().toString(36).substr(2, 5)}`,
           type: 'County',
-          name: item.name,
-          state: item.state,
-          stateCode: item.stateCode,
+          name: name,
           income: undefined,
           isSelected: true
         });
       });
     }
     
+    console.log(`After mathematical physical filtering, selected: ${results.length} areas`);
     return results;
 
   } catch (error: any) {

@@ -1,12 +1,11 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import MapView from './MapView';
 import DataPanel from './DataPanel';
 import Header from './Header';
-import HistoryModal from './components/HistoryModal';
+import HistoryPanel from './HistoryPanel';
 import { ServiceArea } from './types';
 import { fetchAreasInPolygon, geocodeWithAI } from './geoService';
-import { db, getTrackingContext } from './lib/firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { logActivity, ActivityType } from './firebase';
 
 const App: React.FC = () => {
   const [areas, setAreas] = useState<ServiceArea[]>([]);
@@ -16,6 +15,15 @@ const App: React.FC = () => {
   const [hasKey, setHasKey] = useState(true);
   const [mapCenterRequest, setMapCenterRequest] = useState<{lat: number, lng: number, radius: number} | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
+  // Determine username and accountId from query string or default values
+  const { username, accountId } = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return {
+      username: params.get('username') || 'Admin',
+      accountId: params.get('account_id') || '1'
+    };
+  }, []);
 
   useEffect(() => {
     const checkKey = async () => {
@@ -34,48 +42,56 @@ const App: React.FC = () => {
     }
   };
 
-  const handlePolygonDrawn = useCallback(async (coords: number[][]) => {
-    setIsProcessing(true);
-    const { username, accountId } = getTrackingContext();
+  const handleClear = useCallback(() => {
+    setAreas([]);
+    setMapCenterRequest(null);
+    setIsProcessing(false);
+  }, []);
 
+  const handlePolygonDrawn = useCallback(async (coords: number[][], wasTriggeredBySearch = false, searchMetadata?: any) => {
+    console.log("Polygon drawn, starting extraction with coords:", coords.length, "points");
+    // Clear previous results/cache immediately so the UI is clean while processing
+    setAreas([]);
+    setIsProcessing(true);
     try {
       const results = await fetchAreasInPolygon(coords);
+      console.log("Extraction successful, results count:", results.length);
       
-      // Log to Search History
-      try {
-        await addDoc(collection(db, 'history_searches'), {
-          userId: username,
-          accountId: accountId,
-          timestamp: serverTimestamp(),
-          coordinates: coords.map(c => ({ lat: c[0], lng: c[1] })),
-          resultCount: results.length,
-          areas: results.map(r => ({ name: r.name, stateCode: r.stateCode, type: r.type }))
-        });
-      } catch (err) {
-        console.error("Failed to log search:", err);
+      // Log extraction activity if it wasn't a search (manual draw)
+      if (!wasTriggeredBySearch) {
+        logActivity(ActivityType.EXTRACTION, username, accountId, { count: results.length });
       }
 
-      setAreas(prev => {
-        const existingNames = new Set(prev.map(p => `${p.type}-${p.name}-${p.stateCode || ''}`));
-        const uniqueNew = results.filter(r => !existingNames.has(`${r.type}-${r.name}-${r.stateCode || ''}`));
-        return [...prev, ...uniqueNew];
-      });
+      setAreas(results);
     } catch (error: any) {
       console.error("Extraction error:", error);
       alert(`AI Extraction Failed: ${error.message || "Unknown error"}`);
     } finally {
       setIsProcessing(false);
     }
-  }, []);
+  }, [username, accountId]);
 
   const handleRadiusExtract = async (address: string, radiusMiles: number) => {
+    // Clear previous results/cache immediately
+    setAreas([]);
     setIsProcessing(true);
     try {
       let center: { lat: number, lng: number } | null = null;
 
-      // 1. Try Nominatim Geocoding
+      // 1. Try Nominatim Geocoding with timeout
       try {
-        const geoResp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        const geoResp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&limit=1`, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'LSA-Service-Area-Extractor/1.0'
+          }
+        });
+        
+        clearTimeout(timeoutId);
+        
         if (geoResp.ok) {
           const geoData = await geoResp.json();
           if (geoData && geoData.length > 0) {
@@ -83,7 +99,7 @@ const App: React.FC = () => {
           }
         }
       } catch (e) {
-        console.warn("Nominatim failed, trying AI fallback...");
+        console.warn("Nominatim failed or timed out, trying AI fallback...");
       }
 
       // 2. Fallback to Gemini Geocoding if OSM fails
@@ -100,6 +116,9 @@ const App: React.FC = () => {
       // 3. Update Map & Circle
       setMapCenterRequest({ lat: center.lat, lng: center.lng, radius: radiusMiles });
 
+      // Log search activity
+      logActivity(ActivityType.SEARCH, username, accountId, { address, radius: radiusMiles });
+
       // 4. Generate Polygon for AI Processing
       const points = 32; // Higher precision for circles
       const radiusInKm = radiusMiles * 1.60934;
@@ -115,7 +134,7 @@ const App: React.FC = () => {
       polygonCoords.push(polygonCoords[0]); // Close
 
       // 5. Run Extraction
-      await handlePolygonDrawn(polygonCoords);
+      await handlePolygonDrawn(polygonCoords, true);
     } catch (error: any) {
       console.error("Search failure:", error);
       alert(`Search failed: ${error.message}`);
@@ -143,14 +162,11 @@ const App: React.FC = () => {
     <div className="flex flex-col h-screen w-screen bg-white overflow-hidden font-sans">
       <Header 
         onRadiusExtract={handleRadiusExtract} 
-        onHistoryClick={() => setIsHistoryOpen(true)}
+        onOpenHistory={() => setIsHistoryOpen(true)}
+        username={username}
       />
       
-      <HistoryModal 
-        isOpen={isHistoryOpen}
-        onClose={() => setIsHistoryOpen(false)}
-      />
-      
+      <HistoryPanel isOpen={isHistoryOpen} onClose={() => setIsHistoryOpen(false)} />
       {!hasKey && (
         <div className="bg-amber-50 border-b border-amber-100 px-6 py-2 flex items-center justify-between z-20 shrink-0">
           <p className="text-[11px] font-black text-amber-800 uppercase tracking-tighter flex items-center gap-2">
@@ -168,7 +184,11 @@ const App: React.FC = () => {
 
       <main className="flex flex-1 overflow-hidden">
         <div className="flex-1 relative border-r border-gray-100 bg-gray-50">
-          <MapView onPolygonDrawn={handlePolygonDrawn} centerRequest={mapCenterRequest} />
+          <MapView 
+            onPolygonDrawn={handlePolygonDrawn} 
+            onClear={handleClear}
+            centerRequest={mapCenterRequest} 
+          />
           
           {isProcessing && (
             <div className="absolute inset-0 z-[2000] bg-white/70 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
@@ -178,7 +198,7 @@ const App: React.FC = () => {
                 </div>
                 <h3 className="text-2xl font-black text-gray-900 tracking-tight">Processing Data</h3>
                 <p className="text-sm text-gray-500 mt-2 text-center max-w-[240px] leading-relaxed font-medium">
-                  Locating address and extracting regional data...
+                  Extracting exhaustive regional data (ZIPs, Cities, CDPs, and Counties)...
                 </p>
               </div>
             </div>
@@ -190,11 +210,14 @@ const App: React.FC = () => {
             areas={filteredAreas}
             onToggleArea={handleToggleArea}
             onSelectAll={handleSelectAll}
+            onClear={handleClear}
             incomeThreshold={incomeThreshold}
             setIncomeThreshold={setIncomeThreshold}
             showOnlyHighIncome={showOnlyHighIncome}
             setShowOnlyHighIncome={setShowOnlyHighIncome}
             totalCount={areas.length}
+            username={username}
+            accountId={accountId}
           />
         </aside>
       </main>
